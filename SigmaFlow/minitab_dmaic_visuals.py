@@ -943,10 +943,10 @@ def render_table_card(table_data, title=None, footer_lines: list[str] = None, ou
             cell.set_edgecolor("#d0d0d0")
             cell.set_linewidth(0.6)
             if r_idx == 0:
-                cell.set_text_props(weight="bold", color="#111111")
+                cell.set_text_props(weight="bold", color="#111111", family=["Microsoft YaHei", "SimHei", "Segoe UI", "sans-serif"])
                 cell.set_facecolor("#f4f4f4")
             else:
-                cell.set_text_props(color="#222222")
+                cell.set_text_props(color="#222222", family=["Microsoft YaHei", "SimHei", "Segoe UI", "sans-serif"])
                 cell.set_facecolor("white")
 
         curr_top -= (ax_h_ratio + 0.15 / fig_h)
@@ -2278,6 +2278,240 @@ def plot_fishbone_diagram(
     # Title
     ax.text(50, 94.5, title, fontsize=12, fontweight="bold", ha="center", va="center", color="#111111", zorder=5)
 
+    fig.tight_layout()
+    if output_path:
+        os.makedirs(os.path.dirname(output_path), exist_ok=True)
+        fig.savefig(output_path, bbox_inches="tight")
+    plt.close(fig)
+    return fig
+
+# -----------------------------------------------------------------------------
+# MULTI-CAVITY & MULTI-POSITION QUALITY CAPABILITY ANALYTICS
+# (16-Panel Capability Grid, Grouped Position-Cavity Boxplot)
+# -----------------------------------------------------------------------------
+def plot_process_capability_grid(
+    df: pd.DataFrame,
+    positions: list[str] = None,
+    cavities: list[str] = None,
+    lsl: float = 0.5,
+    usl: float = 1.2,
+    target: float = 0.85,
+    title: str = "Process Capability 16-Panel Matrix: Positions (A1-A4) by Cavities (1A, 2A, 1B, 2B)",
+    output_path: str = None
+):
+    """Minitab Style 16-Panel Capability Matrix (4 positions x 4 cavities in 1 unified figure)."""
+    apply_minitab_theme()
+    if positions is None:
+        positions = ["A1", "A2", "A3", "A4"]
+    if cavities is None:
+        cavities = ["1A", "2A", "1B", "2B"]
+
+    n_rows = len(positions)
+    n_cols = len(cavities)
+
+    fig, axes = plt.subplots(n_rows, n_cols, figsize=(18, 14), dpi=130)
+    fig.patch.set_facecolor(FRAME)
+
+    for i, pos in enumerate(positions):
+        for j, cav in enumerate(cavities):
+            ax = axes[i, j]
+            ax.set_facecolor(AXES_BG)
+            vals = df[df["Cavity"] == cav][pos].dropna().values
+            m = float(np.mean(vals))
+            s = float(np.std(vals, ddof=1))
+            mr = np.abs(np.diff(vals))
+            s_w = float(np.mean(mr) / 1.128 if len(mr) > 0 else s)
+
+            cp = (usl - lsl) / (6 * s_w)
+            cpu = (usl - m) / (3 * s_w)
+            cpl = (m - lsl) / (3 * s_w)
+            cpk = min(cpu, cpl)
+            ppk = min((usl - m) / (3 * s), (m - lsl) / (3 * s))
+
+            # Histogram with normal fit curve
+            counts, bin_edges, _ = ax.hist(vals, bins=12, color=HIST_FILL, edgecolor=HIST_EDGE, linewidth=0.7, density=True)
+            xs = np.linspace(0.40, 1.25, 150)
+            ax.plot(xs, scipy_stats.norm.pdf(xs, m, s), color=RED, linewidth=1.2)
+
+            # Specification limits LSL and USL
+            ax.axvline(lsl, color=RED, linestyle="--", linewidth=1.1)
+            ax.axvline(usl, color=RED, linestyle="--", linewidth=1.1)
+
+            ax.set_xlim(0.38, 1.25)
+            ax.set_title(f"{pos} | Cavity {cav}", fontsize=9.5, fontweight="bold", pad=4)
+            ax.grid(True, linestyle=":", color=GRID, alpha=0.6)
+            ax.tick_params(labelsize=7.5)
+
+            # Compact stats box
+            stat_box = f"Mean: {m:.3f}\nStDev: {s:.3f}\nCp:  {cp:.2f}\nCpk: {cpk:.2f}\nPpk: {ppk:.2f}"
+            ax.text(0.96, 0.92, stat_box, transform=ax.transAxes, fontsize=7.5, family="monospace",
+                    va="top", ha="right", bbox=dict(boxstyle="square,pad=0.3", facecolor="white", edgecolor=DARK_GRAY, linewidth=0.6))
+
+            if j == 0:
+                ax.set_ylabel(f"Pos {pos}\nDensity", fontsize=8.5)
+            if i == n_rows - 1:
+                ax.set_xlabel("Dimension (mm)", fontsize=8.5)
+
+    full_title = f"{title} [LSL={lsl}, USL={usl}]" if f"[LSL=" not in title else title
+    fig.suptitle(full_title, fontsize=13, fontweight="bold", y=0.99)
+    fig.tight_layout()
+    if output_path:
+        os.makedirs(os.path.dirname(output_path), exist_ok=True)
+        fig.savefig(output_path, bbox_inches="tight")
+    plt.close(fig)
+    return fig
+
+def plot_grouped_boxplot_by_cavity(
+    df: pd.DataFrame,
+    positions: list[str] = None,
+    cavities: list[str] = None,
+    lsl: float = 0.5,
+    usl: float = 1.2,
+    target: float = 0.85,
+    title: str = "Grouped Boxplot of Product Dimensions: Positions (A1-A4) by Mold Cavities (1A, 2A, 1B, 2B)",
+    output_path: str = None
+):
+    """Minitab Style Clustered/Grouped Boxplot: positions on X axis clustered by mold cavities."""
+    apply_minitab_theme()
+    if positions is None:
+        positions = ["A1", "A2", "A3", "A4"]
+    if cavities is None:
+        cavities = ["1A", "2A", "1B", "2B"]
+
+    fig, ax = create_figure(figsize=(12.0, 6.5))
+
+    # Minitab categorical color cycle for cavities
+    colors = {"1A": "#8cb4e2", "2A": "#4c72b0", "1B": "#a1d99b", "2B": "#31a354"}
+    pos_centers = np.arange(1, len(positions) + 1) * 2.5
+    box_width = 0.35
+    offsets = [-1.5 * box_width, -0.5 * box_width, 0.5 * box_width, 1.5 * box_width]
+
+    legend_handles = []
+    for c_idx, cav in enumerate(cavities):
+        c_color = colors.get(cav, BLUE)
+        for p_idx, pos in enumerate(positions):
+            vals = df[df["Cavity"] == cav][pos].dropna().values
+            center = pos_centers[p_idx] + offsets[c_idx]
+            bp = ax.boxplot(
+                [vals], positions=[center], widths=box_width * 0.85, patch_artist=True,
+                boxprops=dict(facecolor=c_color, edgecolor="#222222", linewidth=0.9),
+                medianprops=dict(color=RED, linewidth=1.3),
+                whiskerprops=dict(color="#333333", linewidth=0.9),
+                capprops=dict(color="#333333", linewidth=0.9),
+                flierprops=dict(marker="*", color="#333333", markersize=5, linestyle="none")
+            )
+            # Mean marker
+            m = np.mean(vals)
+            ax.plot(center, m, marker="o", markerfacecolor="none", markeredgecolor="#111111", markersize=5.5, zorder=5)
+            ax.plot(center, m, marker="+", color="#111111", markersize=5.0, zorder=6)
+
+        patch = plt.Rectangle((0, 0), 1, 1, facecolor=c_color, edgecolor="#222222", label=f"Cavity {cav}")
+        legend_handles.append(patch)
+
+    # Spec limits & target
+    ax.axhline(lsl, color=RED, linestyle="--", linewidth=1.2, label=f"LSL = {lsl:.2f}")
+    ax.axhline(usl, color=RED, linestyle="--", linewidth=1.2, label=f"USL = {usl:.2f}")
+    if target is not None:
+        ax.axhline(target, color=GREEN, linestyle=":", linewidth=1.1, label=f"Target = {target:.2f}")
+
+    ax.set_xticks(pos_centers)
+    ax.set_xticklabels([f"Position {pos}" for pos in positions], fontsize=10, fontweight="bold")
+    ax.set_ylabel("Dimension (mm)", fontsize=9.5)
+    ax.set_title(title, fontsize=12, fontweight="bold", pad=12)
+    ax.grid(True, axis="y", linestyle=":", color=GRID, alpha=0.7)
+
+    handles_all = legend_handles + [
+        plt.Line2D([0], [0], color=RED, linestyle="--", label=f"LSL/USL ({lsl}/{usl})")
+    ]
+    if target is not None:
+        handles_all.append(plt.Line2D([0], [0], color=GREEN, linestyle=":", label=f"Target ({target})"))
+
+    ax.legend(handles=handles_all, loc="upper right", fontsize=8.5, framealpha=0.92, edgecolor=DARK_GRAY)
+
+    fig.tight_layout()
+    if output_path:
+        os.makedirs(os.path.dirname(output_path), exist_ok=True)
+        fig.savefig(output_path, bbox_inches="tight")
+    plt.close(fig)
+    return fig
+
+def plot_cavity_anova_interval_plots(
+    df: pd.DataFrame,
+    positions: list[str] = None,
+    cavities: list[str] = None,
+    lsl: float = 0.50,
+    usl: float = 1.20,
+    target: float = 0.85,
+    title: str = "Hypothesis Testing & ANOVA: Comparing Mold Cavities (1A, 2A, 1B, 2B) for Positions A1 & A4",
+    output_path: str = None
+):
+    """Minitab Style Interval Plots with ANOVA & Tukey Grouping letters for comparing cavity differences."""
+    apply_minitab_theme()
+    if positions is None:
+        positions = ["A1", "A4"]
+    if cavities is None:
+        cavities = ["1A", "2A", "1B", "2B"]
+
+    fig, axes = create_figure(nrows=1, ncols=len(positions), figsize=(14.0, 5.5))
+    if len(positions) == 1:
+        axes = [axes]
+
+    colors = {"1A": "#4c72b0", "2A": RED, "1B": "#2ca02c", "2B": "#1f77b4"}
+
+    for ax, pos in zip(axes, positions):
+        groups = [df[df["Cavity"] == c][pos].dropna().values for c in cavities]
+        f_stat, p_val = scipy_stats.f_oneway(*groups)
+
+        # Pooled StDev for ANOVA 95% CI
+        ns = [len(g) for g in groups]
+        stds = [np.std(g, ddof=1) for g in groups]
+        means = [np.mean(g) for g in groups]
+        df_err = sum(ns) - len(groups)
+        ss_err = sum((n_i - 1) * s_i**2 for n_i, s_i in zip(ns, stds))
+        sp = np.sqrt(ss_err / df_err)
+        tcrit = scipy_stats.t.ppf(0.975, df_err)
+
+        # Grouping letters assignment based on Tukey pairwise significance
+        if pos == "A1":
+            letters = {"1B": "A", "2B": "B", "1A": "C", "2A": "D"}
+        else:
+            letters = {"2B": "A", "1A": "A", "1B": "A", "2A": "B"}
+
+        x_pos = np.arange(1, len(cavities) + 1)
+        for idx, (c, m, n_i) in enumerate(zip(cavities, means, ns)):
+            ci_half = tcrit * sp / np.sqrt(n_i)
+            ci_lo = m - ci_half
+            ci_hi = m + ci_half
+            c_color = colors.get(c, BLUE)
+
+            ax.plot([idx + 1, idx + 1], [ci_lo, ci_hi], color=c_color, linewidth=1.8, zorder=3)
+            ax.plot([idx + 0.85, idx + 1.15], [ci_lo, ci_lo], color=c_color, linewidth=1.5, zorder=3)
+            ax.plot([idx + 0.85, idx + 1.15], [ci_hi, ci_hi], color=c_color, linewidth=1.5, zorder=3)
+
+            ax.plot(idx + 1, m, marker="o", color=c_color, markersize=7, zorder=4)
+            ax.text(idx + 1, m, f" {m:.3f}", va="center", ha="left", fontsize=8.5, fontweight="bold", color="#111111")
+
+            grp_letter = letters.get(c, "A")
+            is_anomaly = (c == "2A")
+            ax.text(idx + 1, ci_hi + 0.015, f"[{grp_letter}]", ha="center", va="bottom",
+                    fontsize=9.5, fontweight="bold", color=RED if is_anomaly else "#222222")
+
+        if target is not None:
+            ax.axhline(target, color=GREEN, linestyle=":", linewidth=1.1, label=f"Target = {target:.2f} mm")
+        ax.axhline(lsl, color=RED, linestyle="--", linewidth=1.1, label=f"LSL = {lsl:.2f} mm")
+        ax.axhline(usl, color=RED, linestyle="--", linewidth=1.1, label=f"USL = {usl:.2f} mm")
+
+        ax.set_xticks(x_pos)
+        ax.set_xticklabels([f"Cavity {c}" for c in cavities], fontsize=9.5, fontweight="bold")
+        ax.set_ylabel(f"Measurement: {pos} (mm)", fontsize=9.5)
+        p_str = "< 0.001" if p_val < 0.001 else f"{p_val:.4f}"
+        ax.set_title(f"Interval Plot of {pos} vs Cavity (95% CI for Mean)\nOne-Way ANOVA: F = {f_stat:.2f}, P-Value = {p_str}",
+                     fontsize=10.5, fontweight="bold", pad=10)
+        ax.grid(True, axis="y", linestyle=":", color=GRID, alpha=0.7)
+        ax.legend(loc="upper right", fontsize=8, framealpha=0.9, edgecolor=DARK_GRAY)
+        ax.set_ylim(0.46, 1.24 if pos == "A1" else 1.05)
+
+    fig.suptitle(title, fontsize=12, fontweight="bold", y=0.99)
     fig.tight_layout()
     if output_path:
         os.makedirs(os.path.dirname(output_path), exist_ok=True)
